@@ -1,0 +1,11 @@
+# Kept in its own file on purpose: deleting a namespace deletes everything in
+# it, INCLUDING the database's PersistentVolumeClaims. Keeping it separate means
+# `kubectl delete -f k8s/10-mongodb.yaml -f k8s/20-services.yaml` tears the app
+# down while the stored data survives.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bookhub
+  labels:
+    app.kubernetes.io/part-of: bookhub

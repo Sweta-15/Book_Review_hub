@@ -1,0 +1,224 @@
+# Book Review Hub microservices
+# --------------------------------------------------------------------------
+#  frontend         Deployment (2 replicas) + LoadBalancer Service  <- the ONLY public entry point
+#  books-service    Deployment (2 replicas) + ClusterIP Service     <- internal only
+#  reviews-service  Deployment (2 replicas) + ClusterIP Service     <- internal only
+#
+# Services find each other by Kubernetes DNS name (e.g. http://books-service:5001),
+# so no IP addresses need to be patched into ConfigMaps at deploy time.
+# Each Deployment has its own `replicas`, so every service scales independently:
+#   kubectl -n bookhub scale deployment/books-service --replicas=4
+#
+# Replace YOUR_DOCKERHUB_USER with your Docker Hub username
+# (scripts/set-dockerhub-user.sh does this for you).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bookhub-config
+  namespace: bookhub
+  labels:
+    app.kubernetes.io/part-of: bookhub
+data:
+  DB_NAME: bookhub
+  BOOKS_SERVICE_URL: http://books-service:5001
+  REVIEWS_SERVICE_URL: http://reviews-service:5002
+  HTTP_TIMEOUT: "3"
+  HTTP_RETRIES: "2"
+
+# ========================================================================
+# books-service
+# ========================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: books-service
+  namespace: bookhub
+  labels:
+    app: books-service
+spec:
+  type: ClusterIP              # not reachable from outside the cluster
+  ports:
+    - name: http
+      port: 5001
+      targetPort: http
+  selector:
+    app: books-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: books-service
+  namespace: bookhub
+  labels:
+    app: books-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: books-service
+  template:
+    metadata:
+      labels:
+        app: books-service
+    spec:
+      containers:
+        - name: books-service
+          image: YOUR_DOCKERHUB_USER/bookhub-books-service:1.0
+          ports:
+            - name: http
+              containerPort: 5001
+          envFrom:
+            - configMapRef:
+                name: bookhub-config
+          env:
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: mongo-uri }
+          readinessProbe:            # only receive traffic once MongoDB is reachable
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:             # restart the container if the process hangs
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m,  memory: 64Mi }
+            limits:   { cpu: 250m, memory: 256Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+
+# ========================================================================
+# reviews-service
+# ========================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reviews-service
+  namespace: bookhub
+  labels:
+    app: reviews-service
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 5002
+      targetPort: http
+  selector:
+    app: reviews-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reviews-service
+  namespace: bookhub
+  labels:
+    app: reviews-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: reviews-service
+  template:
+    metadata:
+      labels:
+        app: reviews-service
+    spec:
+      containers:
+        - name: reviews-service
+          image: YOUR_DOCKERHUB_USER/bookhub-reviews-service:1.0
+          ports:
+            - name: http
+              containerPort: 5002
+          envFrom:
+            - configMapRef:
+                name: bookhub-config
+          env:
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: mongo-uri }
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m,  memory: 64Mi }
+            limits:   { cpu: 250m, memory: 256Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+
+# ========================================================================
+# frontend (API gateway + web UI)
+# ========================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: bookhub
+  labels:
+    app: frontend
+spec:
+  type: LoadBalancer           # exposes the app to "the outside"
+  ports:
+    - name: http
+      port: 8080               # Docker Desktop: http://localhost:8080
+      targetPort: http
+      nodePort: 30080          # any node IP:30080; minikube: `minikube service frontend -n bookhub`
+  selector:
+    app: frontend
+  # No sessionAffinity needed: unlike QuoteFinder (socket.io), every request
+  # is a stateless REST call, so any replica can serve any request.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: bookhub
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: YOUR_DOCKERHUB_USER/bookhub-frontend:1.0
+          ports:
+            - name: http
+              containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: bookhub-config
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m,  memory: 64Mi }
+            limits:   { cpu: 250m, memory: 256Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

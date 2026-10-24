@@ -1,0 +1,61 @@
+# Local development setup (as recommended in the course: develop with Docker
+# Compose, deploy to Kubernetes only when everything works).
+#
+#   docker compose up --build        -> http://localhost:8080
+#   docker compose up -d --scale books-service=3   -> scale a service locally
+#
+# Source folders are bind-mounted and Flask runs in debug mode, so code edits
+# reload instantly. The passwords below are for LOCAL DEVELOPMENT ONLY.
+services:
+  frontend:
+    build: ./frontend
+    command: flask --app app run --debug --host 0.0.0.0 --port 5000
+    ports:
+      - "8080:5000"
+    volumes:
+      - ./frontend:/app
+    environment:
+      BOOKS_SERVICE_URL: http://books-service:5001
+      REVIEWS_SERVICE_URL: http://reviews-service:5002
+    depends_on: [books-service, reviews-service]
+
+  books-service:
+    build: ./books-service
+    command: flask --app app run --debug --host 0.0.0.0 --port 5001
+    volumes:
+      - ./books-service:/app
+    environment:
+      MONGO_URI: mongodb://bookhub_app:devpassword@mongo:27017/bookhub?authSource=bookhub
+      DB_NAME: bookhub
+    depends_on: [mongo]
+
+  reviews-service:
+    build: ./reviews-service
+    command: flask --app app run --debug --host 0.0.0.0 --port 5002
+    volumes:
+      - ./reviews-service:/app
+    environment:
+      MONGO_URI: mongodb://bookhub_app:devpassword@mongo:27017/bookhub?authSource=bookhub
+      DB_NAME: bookhub
+      BOOKS_SERVICE_URL: http://books-service:5001
+    depends_on: [mongo, books-service]
+
+  mongo:
+    image: mongo:7
+    command: --quiet
+    expose:
+      - "27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: devrootpassword
+      APP_DB_NAME: bookhub
+      APP_DB_USER: bookhub_app
+      APP_DB_PASSWORD: devpassword
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  mongo-data:
+  mongo-config:

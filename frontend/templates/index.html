@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book Review Hub</title>
+<style>
+  :root {
+    --bg: #f6f3ee; --card: #ffffff; --ink: #1f2328; --muted: #6b6f76;
+    --line: #e4ded4; --accent: #2f5d50; --accent-ink: #ffffff; --star: #c98a1b; --err: #a33a2b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--ink); line-height: 1.45; }
+  header { padding: 28px 20px 8px; max-width: 980px; margin: 0 auto; }
+  header h1 { margin: 0; font-family: Georgia, serif; font-size: 2rem; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 20px 40px;
+         display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 8px 0 3px; }
+  input, textarea, select { width: 100%; padding: 8px; border: 1px solid var(--line);
+         border-radius: 6px; font: inherit; background: #fff; }
+  textarea { min-height: 60px; resize: vertical; }
+  button { margin-top: 12px; padding: 8px 14px; border: 0; border-radius: 6px;
+           background: var(--accent); color: var(--accent-ink); font: inherit; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--err); border: 1px solid var(--line); }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .toolbar input { flex: 1; }
+  .toolbar button { margin-top: 0; }
+  .book { border-top: 1px solid var(--line); padding: 12px 0; }
+  .book:first-child { border-top: 0; }
+  .book-head { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; }
+  .title { font-weight: 600; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  .stars { color: var(--star); white-space: nowrap; }
+  .detail { margin-top: 10px; padding: 12px; background: var(--bg); border-radius: 8px; }
+  .review { padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: .92rem; }
+  .msg { font-size: .9rem; margin-top: 8px; min-height: 1.2em; }
+  .msg.err { color: var(--err); }
+  footer { max-width: 980px; margin: 0 auto; padding: 0 20px 30px; color: var(--muted); font-size: .82rem; }
+  code { background: #ece6db; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Book Review Hub</h1>
+  <p>A microservice demo: frontend gateway &rarr; books-service + reviews-service &rarr; MongoDB, on Kubernetes.</p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Add a book</h2>
+    <form id="book-form">
+      <label for="title">Title</label><input id="title" required maxlength="200">
+      <label for="author">Author</label><input id="author" required maxlength="200">
+      <label for="year">Year</label><input id="year" type="number" min="0" max="2100">
+      <label for="description">Description</label><textarea id="description" maxlength="2000"></textarea>
+      <button type="submit">Add book</button>
+      <div id="book-msg" class="msg"></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Catalogue</h2>
+    <div class="toolbar">
+      <input id="search" placeholder="Search title or author">
+      <button id="search-btn">Search</button>
+    </div>
+    <div id="catalog-msg" class="msg"></div>
+    <div id="books"></div>
+  </section>
+</main>
+
+<footer>
+  Served by &mdash; frontend: <code id="pod-frontend">?</code>
+  books-service: <code id="pod-books">?</code>
+  reviews-service: <code id="pod-reviews">?</code>
+  <br>Refresh the page a few times to watch Kubernetes load-balance across replicas.
+</footer>
+
+<script>
+// All user data is inserted with textContent (never innerHTML) to prevent XSS.
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+function stars(avg) {
+  if (avg === null || avg === undefined) return "no ratings yet";
+  const full = Math.round(avg);
+  return "★".repeat(full) + "☆".repeat(5 - full) + " " + avg;
+}
+function setMsg(node, text, isErr) { node.textContent = text || ""; node.className = "msg" + (isErr ? " err" : ""); }
+
+async function api(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const resp = await fetch(url, opts);
+  let data = null;
+  if (resp.status !== 204) { try { data = await resp.json(); } catch (e) { data = null; } }
+  if (!resp.ok) {
+    const msg = data && (data.error || (data.errors && data.errors.join("; "))) || ("HTTP " + resp.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function loadCatalog() {
+  const q = $("search").value.trim();
+  try {
+    const data = await api("GET", "/api/catalog" + (q ? "?q=" + encodeURIComponent(q) : ""));
+    $("pod-frontend").textContent = data.served_by.frontend || "?";
+    $("pod-books").textContent = data.served_by["books-service"] || "?";
+    $("pod-reviews").textContent = data.served_by["reviews-service"] || "unavailable";
+    setMsg($("catalog-msg"), data.reviews_available ? "" : "Ratings are temporarily unavailable (reviews-service down).", true);
+    renderBooks(data.books);
+  } catch (e) {
+    setMsg($("catalog-msg"), "Could not load catalogue: " + e.message, true);
+  }
+}
+
+function renderBooks(books) {
+  const list = $("books");
+  list.replaceChildren();
+  if (!books.length) { list.appendChild(el("p", "meta", "No books yet. Add one on the left.")); return; }
+  for (const b of books) {
+    const item = el("div", "book");
+    const head = el("div", "book-head");
+    const left = el("div");
+    left.appendChild(el("div", "title", b.title));
+    left.appendChild(el("div", "meta", b.author + (b.year ? " · " + b.year : "")));
+    head.appendChild(left);
+    head.appendChild(el("div", "stars", stars(b.avg_rating) + " (" + b.review_count + ")"));
+    const detail = el("div", "detail");
+    detail.hidden = true;
+    head.addEventListener("click", () => {
+      detail.hidden = !detail.hidden;
+      if (!detail.hidden) loadDetail(b.id, detail);
+    });
+    item.appendChild(head);
+    item.appendChild(detail);
+    list.appendChild(item);
+  }
+}
+
+async function loadDetail(bookId, box) {
+  box.replaceChildren(el("p", "meta", "Loading…"));
+  try {
+    const data = await api("GET", "/api/books/" + encodeURIComponent(bookId));
+    box.replaceChildren();
+    if (data.book.description) box.appendChild(el("p", null, data.book.description));
+    box.appendChild(el("h2", null, "Reviews"));
+    if (!data.reviews.length) box.appendChild(el("p", "meta", "No reviews yet."));
+    for (const r of data.reviews) {
+      const row = el("div", "review");
+      row.appendChild(el("span", "stars", "★".repeat(r.rating) + " "));
+      row.appendChild(el("strong", null, r.reviewer));
+      if (r.comment) row.appendChild(el("div", null, r.comment));
+      box.appendChild(row);
+    }
+    // review form
+    const form = el("form");
+    form.innerHTML =
+      '<label>Your name</label><input name="reviewer" required maxlength="100">' +
+      '<label>Rating</label><select name="rating"><option>5</option><option>4</option>' +
+      '<option>3</option><option>2</option><option>1</option></select>' +
+      '<label>Comment</label><textarea name="comment" maxlength="2000"></textarea>' +
+      '<button type="submit">Add review</button> ';
+    const del = el("button", "ghost", "Delete book");
+    del.type = "button";
+    form.appendChild(del);
+    const msg = el("div", "msg");
+    form.appendChild(msg);
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      try {
+        await api("POST", "/api/books/" + encodeURIComponent(bookId) + "/reviews", {
+          reviewer: form.reviewer.value, rating: Number(form.rating.value), comment: form.comment.value });
+        await loadCatalog();
+      } catch (e) { setMsg(msg, e.message, true); }
+    });
+    del.addEventListener("click", async () => {
+      if (!confirm("Delete this book and all its reviews?")) return;
+      try { await api("DELETE", "/api/books/" + encodeURIComponent(bookId)); await loadCatalog(); }
+      catch (e) { setMsg(msg, e.message, true); }
+    });
+    box.appendChild(form);
+  } catch (e) {
+    box.replaceChildren(el("p", "msg err", "Could not load reviews: " + e.message));
+  }
+}
+
+$("book-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    await api("POST", "/api/books", {
+      title: $("title").value, author: $("author").value,
+      year: $("year").value || null, description: $("description").value });
+    ev.target.reset();
+    setMsg($("book-msg"), "Book added.");
+    await loadCatalog();
+  } catch (e) { setMsg($("book-msg"), e.message, true); }
+});
+$("search-btn").addEventListener("click", loadCatalog);
+$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") loadCatalog(); });
+loadCatalog();
+</script>
+</body>
+</html>

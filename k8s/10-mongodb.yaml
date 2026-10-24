@@ -1,0 +1,126 @@
+# MongoDB database
+# --------------------------------------------------------------------------
+# - StatefulSet with 1 replica (the assignment does not require a scalable DB)
+# - volumeClaimTemplates -> a PersistentVolumeClaim per replica, so the data
+#   survives pod restarts, redeploys and cluster (minikube) restarts.
+# - Headless Service "mongo" -> stable DNS name mongo-0.mongo.bookhub.svc...
+# - Credentials come from the Secret "bookhub-secrets" (created by
+#   scripts/deploy.sh, NEVER committed to git).
+# - Init script (ConfigMap) creates a least-privilege application user.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-init
+  namespace: bookhub
+  labels:
+    app: mongo
+data:
+  init-app-user.js: |
+    // Runs once, on first start with an empty data directory.
+    const dbName = process.env.APP_DB_NAME || "bookhub";
+    db.getSiblingDB(dbName).createUser({
+      user: process.env.APP_DB_USER,
+      pwd: process.env.APP_DB_PASSWORD,
+      roles: [{ role: "readWrite", db: dbName }],
+    });
+    print("Created application user on database " + dbName);
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: bookhub
+  labels:
+    app: mongo
+spec:
+  clusterIP: None            # headless: only reachable inside the cluster
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: mongodb
+  selector:
+    app: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: bookhub
+  labels:
+    app: mongo
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          args: ["--bind_ip_all", "--quiet"]
+          ports:
+            - name: mongodb
+              containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: mongo-root-username }
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: mongo-root-password }
+            - name: APP_DB_NAME
+              value: bookhub
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: app-db-user }
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: bookhub-secrets, key: app-db-password }
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping: 1})"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping: 1})"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+            - name: mongo-config
+              mountPath: /data/configdb
+            - name: mongo-init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: mongo-init
+          configMap:
+            name: mongo-init
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: mongo-config
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Mi
