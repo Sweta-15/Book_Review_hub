@@ -65,7 +65,7 @@ spec:
     spec:
       containers:
         - name: books-service
-          image: YOUR_DOCKERHUB_USER/bookhub-books-service:1.0
+          image: sadhinegi/bookhub-books-service:1.0
           ports:
             - name: http
               containerPort: 5001
@@ -131,7 +131,7 @@ spec:
     spec:
       containers:
         - name: reviews-service
-          image: YOUR_DOCKERHUB_USER/bookhub-reviews-service:1.0
+          image: sadhinegi/bookhub-reviews-service:1.0
           ports:
             - name: http
               containerPort: 5002
@@ -200,7 +200,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: YOUR_DOCKERHUB_USER/bookhub-frontend:1.0
+          image: sadhinegi/bookhub-frontend:1.0
           ports:
             - name: http
               containerPort: 5000

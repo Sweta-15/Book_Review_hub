@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 NS=bookhub
 
-if grep -q "YOUR_DOCKERHUB_USER" k8s/20-services.yaml; then
+if grep -q "image: YOUR_DOCKERHUB_USER" k8s/20-services.yaml; then
   echo "ERROR: run ./scripts/set-dockerhub-user.sh <your-dockerhub-username> first." >&2
   exit 1
 fi
