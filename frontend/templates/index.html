@@ -47,7 +47,6 @@
 <body>
 <header>
   <h1>Book Review Hub</h1>
-  <p>A microservice demo: frontend gateway &rarr; books-service + reviews-service &rarr; MongoDB, on Kubernetes.</p>
 </header>
 
 <main>
@@ -74,12 +73,6 @@
   </section>
 </main>
 
-<footer>
-  Served by &mdash; frontend: <code id="pod-frontend">?</code>
-  books-service: <code id="pod-books">?</code>
-  reviews-service: <code id="pod-reviews">?</code>
-  <br>Refresh the page a few times to watch Kubernetes load-balance across replicas.
-</footer>
 
 <script>
 // All user data is inserted with textContent (never innerHTML) to prevent XSS.
@@ -114,9 +107,6 @@ async function loadCatalog() {
   const q = $("search").value.trim();
   try {
     const data = await api("GET", "/api/catalog" + (q ? "?q=" + encodeURIComponent(q) : ""));
-    $("pod-frontend").textContent = data.served_by.frontend || "?";
-    $("pod-books").textContent = data.served_by["books-service"] || "?";
-    $("pod-reviews").textContent = data.served_by["reviews-service"] || "unavailable";
     setMsg($("catalog-msg"), data.reviews_available ? "" : "Ratings are temporarily unavailable (reviews-service down).", true);
     renderBooks(data.books);
   } catch (e) {

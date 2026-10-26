@@ -20,4 +20,4 @@ USER 10001
 EXPOSE 5000
 
 # gunicorn = production WSGI server (Flask's built-in server is for development only)
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 2 --worker-tmp-dir /dev/shm --access-logfile - app:app"]
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 2 --threads 8 --worker-tmp-dir /dev/shm --access-logfile - app:app"]
